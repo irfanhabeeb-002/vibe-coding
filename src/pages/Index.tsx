@@ -94,6 +94,14 @@ const Index = () => {
   const [reportDescription, setReportDescription] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
 
+  // Filter counts state
+  const [filterCounts, setFilterCounts] = useState({
+    all: 0,
+    nearby: 0,
+    available: 0,
+    endingSoon: 0
+  });
+
   // Auth state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -769,7 +777,7 @@ const Index = () => {
   }
 
   // Fetch nearby posts from Supabase using the new function
-  const fetchNearbyPosts = async () => {
+  const fetchNearbyPosts = useCallback(async () => {
     setNearbyLoading(true);
     setNearbyError(null);
     
@@ -821,7 +829,14 @@ const Index = () => {
       setNearbyError("Failed to get your location.");
       setNearbyLoading(false);
     });
-  };
+  }, []);
+
+  // Auto-fetch nearby posts when nearby filter is selected
+  useEffect(() => {
+    if (activeFilter === 'nearby' && nearbyPosts.length === 0 && !nearbyLoading) {
+      fetchNearbyPosts();
+    }
+  }, [activeFilter, nearbyPosts.length, nearbyLoading, fetchNearbyPosts]);
 
   // Search food posts from Supabase
   const handleSearch = async (query: string) => {
@@ -867,6 +882,57 @@ const Index = () => {
       setSearchLoading(false);
     }
   };
+
+  // Calculate filter counts
+  const calculateFilterCounts = useCallback(() => {
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
+
+    const counts = {
+      all: foodPosts.length,
+      nearby: nearbyPosts.length,
+      available: foodPosts.filter(post => 
+        new Date(post.available_until) > now && post.current_count > 0
+      ).length,
+      endingSoon: foodPosts.filter(post => 
+        new Date(post.available_until) > now && 
+        new Date(post.available_until) <= oneHourFromNow && 
+        post.current_count > 0
+      ).length
+    };
+
+    setFilterCounts(counts);
+  }, [foodPosts, nearbyPosts]);
+
+  // Update filter counts when data changes
+  useEffect(() => {
+    calculateFilterCounts();
+  }, [calculateFilterCounts]);
+
+  // Filter posts based on active filter
+  const getFilteredPosts = useCallback(() => {
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
+
+    switch (activeFilter) {
+      case 'all':
+        return foodPosts;
+      case 'nearby':
+        return nearbyPosts;
+      case 'available':
+        return foodPosts.filter(post => 
+          new Date(post.available_until) > now && post.current_count > 0
+        );
+      case 'ending-soon':
+        return foodPosts.filter(post => 
+          new Date(post.available_until) > now && 
+          new Date(post.available_until) <= oneHourFromNow && 
+          post.current_count > 0
+        );
+      default:
+        return foodPosts;
+    }
+  }, [foodPosts, nearbyPosts, activeFilter]);
 
   // Debounced search
   const debouncedSearch = useCallback(
@@ -925,20 +991,30 @@ const Index = () => {
       case 'home':
         return (
           <div className="pb-20">
-            <FilterTabs activeFilter={activeFilter} onFilterChange={setActiveFilter} />
+            <FilterTabs activeFilter={activeFilter} onFilterChange={setActiveFilter} counts={filterCounts} />
             <div className="px-4 space-y-4">
               {loading ? (
                 <div className="text-center py-12">
                   <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
                   <p className="text-muted-foreground">Loading food posts...</p>
                 </div>
-              ) : foodPosts.length === 0 ? (
+              ) : getFilteredPosts().length === 0 ? (
                 <div className="text-center py-12 fade-in">
                   <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
                     <span className="text-2xl">🍽️</span>
                   </div>
-                  <h3 className="font-semibold text-lg mb-2">No food available</h3>
-                  <p className="text-muted-foreground text-sm mb-4">Be the first to share food in your area!</p>
+                  <h3 className="font-semibold text-lg mb-2">
+                    {activeFilter === 'nearby' ? 'No nearby food found' :
+                     activeFilter === 'available' ? 'No available food' :
+                     activeFilter === 'ending-soon' ? 'No food ending soon' :
+                     'No food available'}
+                  </h3>
+                  <p className="text-muted-foreground text-sm mb-4">
+                    {activeFilter === 'nearby' ? 'Try enabling location access or check back later' :
+                     activeFilter === 'available' ? 'All food has been claimed or expired' :
+                     activeFilter === 'ending-soon' ? 'No food is ending within the next hour' :
+                     'Be the first to share food in your area!'}
+                  </p>
                   
                   {/* Show setup instructions if user is not signed in */}
                   {!user && (
@@ -953,7 +1029,7 @@ const Index = () => {
                   )}
                 </div>
               ) : (
-                foodPosts.map((post, index) => (
+                getFilteredPosts().map((post, index) => (
                   <div key={post.id} className="slide-up" style={{ animationDelay: `${index * 0.1}s` }}>
                     <FoodCard 
                       id={post.id}
@@ -978,44 +1054,56 @@ const Index = () => {
       
       case 'nearby':
         return (
-          <div className="flex flex-col items-center justify-center h-96 fade-in">
-            <div className="text-center w-full max-w-md">
-              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">📍</span>
+          <div className="pb-20">
+            <div className="px-4 py-3 bg-background">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">📍 Nearby Food</h3>
+                <button
+                  className="btn-apple btn-primary px-3 py-1 rounded text-sm"
+                  onClick={fetchNearbyPosts}
+                  disabled={nearbyLoading}
+                >
+                  {nearbyLoading ? 'Loading...' : 'Refresh'}
+                </button>
               </div>
-              <h3 className="font-semibold text-lg mb-2">Nearby Food</h3>
-              <button
-                className="btn-apple btn-primary px-4 py-2 rounded mb-4"
-                onClick={fetchNearbyPosts}
-                disabled={nearbyLoading}
-              >
-                {nearbyLoading ? 'Loading...' : 'Find Nearby Food'}
-              </button>
-              {nearbyError && <div className="text-red-500 text-sm mb-2">{nearbyError}</div>}
-              <div className="text-left">
-                {nearbyPosts.length === 0 && !nearbyLoading && !nearbyError && (
-                  <div className="text-muted-foreground text-sm">No nearby food found. Try again!</div>
-                )}
-                <ul className="space-y-2">
-                  {nearbyPosts.map((post) => (
-                    <li key={post.id} className="bg-background p-3 rounded shadow group relative">
-                      <button
-                        onClick={() => openReportModal(post)}
-                        className="absolute top-2 right-2 p-1 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                        title="Report this post"
-                      >
-                        <span className="text-xs">🚩</span>
-                      </button>
-                      <div className="font-semibold">{post.title}</div>
-                      <div className="text-xs text-muted-foreground">{post.location} • {post.distance}</div>
-                      <div className="text-xs">{post.description}</div>
-                      <div className="text-xs text-primary mt-1">
-                        {post.current_count}/{post.total_count} available
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              {nearbyError && <div className="text-red-500 text-sm mt-2">{nearbyError}</div>}
+            </div>
+            <div className="px-4 space-y-4">
+              {nearbyLoading ? (
+                <div className="text-center py-12">
+                  <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                  <p className="text-muted-foreground">Finding nearby food...</p>
+                </div>
+              ) : nearbyPosts.length === 0 ? (
+                <div className="text-center py-12 fade-in">
+                  <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-2xl">📍</span>
+                  </div>
+                  <h3 className="font-semibold text-lg mb-2">No nearby food found</h3>
+                  <p className="text-muted-foreground text-sm mb-4">
+                    {nearbyError ? 'Location access denied. Please enable location services.' : 'No food available within 10km. Try again later!'}
+                  </p>
+                </div>
+              ) : (
+                nearbyPosts.map((post, index) => (
+                  <div key={post.id} className="slide-up" style={{ animationDelay: `${index * 0.1}s` }}>
+                    <FoodCard 
+                      id={post.id}
+                      title={post.title}
+                      location={post.location}
+                      time={`Available until ${new Date(post.available_until).toLocaleString()}`}
+                      count={post.current_count}
+                      totalCount={post.total_count}
+                      postedBy={post.profiles?.full_name || 'Anonymous'}
+                      distance={post.distance}
+                      description={post.description || 'No description'}
+                      availableUntil={post.available_until}
+                      onAvail={handleAvail}
+                      onReport={() => openReportModal(post)}
+                    />
+                  </div>
+                ))
+              )}
             </div>
           </div>
         );

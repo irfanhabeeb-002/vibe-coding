@@ -1,14 +1,22 @@
+import { useState, useEffect } from "react";
+
 interface FilterTabsProps {
   activeFilter: string;
   onFilterChange: (filter: string) => void;
+  counts: {
+    all: number;
+    nearby: number;
+    available: number;
+    endingSoon: number;
+  };
 }
 
-export const FilterTabs = ({ activeFilter, onFilterChange }: FilterTabsProps) => {
+export const FilterTabs = ({ activeFilter, onFilterChange, counts }: FilterTabsProps) => {
   const filters = [
-    { id: 'all', label: 'All Food', count: 12 },
-    { id: 'nearby', label: 'Nearby', count: 5 },
-    { id: 'available', label: 'Available', count: 8 },
-    { id: 'ending-soon', label: 'Ending Soon', count: 3 },
+    { id: 'all', label: 'All Food', count: counts.all },
+    { id: 'nearby', label: 'Nearby', count: counts.nearby },
+    { id: 'available', label: 'Available', count: counts.available },
+    { id: 'ending-soon', label: 'Ending Soon', count: counts.endingSoon },
   ];
 
   return (
