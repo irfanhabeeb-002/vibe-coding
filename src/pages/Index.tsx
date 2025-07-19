@@ -234,71 +234,73 @@ const Index = () => {
     try {
       console.log('Fetching food posts...');
       
-      const { data, error } = await supabase
+      // Get all active food posts that haven't expired
+      const { data: postsData, error: postsError } = await supabase
         .from('food_posts')
         .select('*')
         .eq('is_active', true)
+        .gt('available_until', new Date().toISOString())
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error fetching food posts:', error);
+      if (postsError) {
+        console.error('Error fetching food posts:', postsError);
         // If table doesn't exist, set empty array instead of throwing
-        if (error.code === '42P01') { // Table doesn't exist
+        if (postsError.code === '42P01') { // Table doesn't exist
           console.log('Food posts table not found - schema may need setup');
           setFoodPosts([]);
           setShowSetupBanner(true);
           setSchemaSetupComplete(false);
           return;
         }
-        throw error;
+        // For other errors, just set empty array and continue
+        setFoodPosts([]);
+        return;
       }
 
-      console.log('Raw food posts data:', data);
-      console.log('Number of posts found:', data?.length || 0);
-      if (data && data.length > 0) {
-        console.log('Sample post:', data[0]);
-        console.log('Sample post available_until:', data[0].available_until);
-        console.log('Current time:', new Date().toISOString());
-        console.log('Is sample post expired?', new Date(data[0].available_until) < new Date());
-      } else {
+      console.log('Raw food posts data:', postsData);
+      console.log('Number of posts found:', postsData?.length || 0);
+      
+      if (!postsData || postsData.length === 0) {
         console.log('No posts found in database');
+        setFoodPosts([]);
+        return;
       }
 
-      // Get user profiles for the posts
-      const postsWithProfiles = await Promise.all(
-        (data || []).map(async (post) => {
-          try {
-            const { data: profileData, error: profileError } = await supabase
-              .from('profiles')
-              .select('full_name')
-              .eq('user_id', post.posted_by)
-              .single();
-            
-            if (profileError) {
-              console.error('Error fetching profile for user:', post.posted_by, profileError);
-            }
-            
-            return {
-              ...post,
-              profiles: profileData
-            } as FoodPost;
-          } catch (profileError) {
-            console.error('Error fetching profile for post:', post.id, profileError);
-            return {
-              ...post,
-              profiles: null
-            } as FoodPost;
-          }
-        })
-      );
+      // Get unique user IDs from posts
+      const userIds = [...new Set(postsData.map(post => post.posted_by))];
+      
+      // Fetch all profiles in a single query
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .in('user_id', userIds);
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+      }
+
+      // Create a map of user_id to profile data
+      const profilesMap = new Map();
+      if (profilesData) {
+        profilesData.forEach(profile => {
+          profilesMap.set(profile.user_id, profile);
+        });
+      }
+
+      // Combine posts with profiles
+      const postsWithProfiles = postsData.map(post => ({
+        ...post,
+        profiles: profilesMap.get(post.posted_by) || null
+      })) as FoodPost[];
 
       console.log('Food posts with profiles:', postsWithProfiles);
       setFoodPosts(postsWithProfiles);
     } catch (error: any) {
       console.error('Error fetching food posts:', error);
+      setFoodPosts([]);
       toast({
         title: "Error",
-        description: error.message || "Failed to load food posts",
+        description: "Failed to load food posts. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -311,61 +313,69 @@ const Index = () => {
     try {
       console.log('Fetching groups...');
       
-      const { data, error } = await supabase
+      const { data: groupsData, error: groupsError } = await supabase
         .from('groups')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Error fetching groups:', error);
+      if (groupsError) {
+        console.error('Error fetching groups:', groupsError);
         // If table doesn't exist, set empty array instead of throwing
-        if (error.code === '42P01') { // Table doesn't exist
+        if (groupsError.code === '42P01') { // Table doesn't exist
           console.log('Groups table not found - schema may need setup');
           setGroups([]);
           setShowSetupBanner(true);
           setSchemaSetupComplete(false);
           return;
         }
-        throw error;
+        // For other errors, just set empty array and continue
+        setGroups([]);
+        return;
       }
 
-      console.log('Raw groups data:', data);
+      console.log('Raw groups data:', groupsData);
 
-      // Get admin profiles for the groups
-      const groupsWithProfiles = await Promise.all(
-        (data || []).map(async (group) => {
-          try {
-            const { data: profileData, error: profileError } = await supabase
-              .from('profiles')
-              .select('full_name')
-              .eq('user_id', group.admin_id)
-              .single();
-            
-            if (profileError) {
-              console.error('Error fetching profile for admin:', group.admin_id, profileError);
-            }
-            
-            return {
-              ...group,
-              profiles: profileData
-            } as Group;
-          } catch (profileError) {
-            console.error('Error fetching profile for group:', group.id, profileError);
-            return {
-              ...group,
-              profiles: null
-            } as Group;
-          }
-        })
-      );
+      if (!groupsData || groupsData.length === 0) {
+        console.log('No groups found in database');
+        setGroups([]);
+        return;
+      }
+
+      // Get unique admin IDs from groups
+      const adminIds = [...new Set(groupsData.map(group => group.admin_id))];
+      
+      // Fetch all admin profiles in a single query
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .in('user_id', adminIds);
+
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+      }
+
+      // Create a map of user_id to profile data
+      const profilesMap = new Map();
+      if (profilesData) {
+        profilesData.forEach(profile => {
+          profilesMap.set(profile.user_id, profile);
+        });
+      }
+
+      // Combine groups with profiles
+      const groupsWithProfiles = groupsData.map(group => ({
+        ...group,
+        profiles: profilesMap.get(group.admin_id) || null
+      })) as Group[];
 
       console.log('Groups with profiles:', groupsWithProfiles);
       setGroups(groupsWithProfiles);
     } catch (error: any) {
       console.error('Error fetching groups:', error);
+      setGroups([]);
       toast({
         title: "Error",
-        description: error.message || "Failed to load groups",
+        description: "Failed to load groups. Please try again.",
         variant: "destructive"
       });
     }
@@ -382,47 +392,29 @@ const Index = () => {
         console.log('Initializing app...');
         setInitializing(true);
         
-        // Add a timeout to prevent infinite loading
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Initialization timeout')), 10000); // 10 seconds
-        });
-        
-        const initPromise = (async () => {
-          // Test database connection first
-          const dbConnected = await testDatabaseConnection();
-          if (dbConnected && isMounted) {
-            // Fetch data even if schema might not be complete
-            await Promise.allSettled([
-              fetchFoodPosts(),
-              fetchGroups()
-            ]);
-            console.log('App initialization complete');
-          } else if (isMounted) {
-            toast({
-              title: "Database Connection Error",
-              description: "Unable to connect to database. Please check your connection.",
-              variant: "destructive"
-            });
-          }
-        })();
-        
-        await Promise.race([initPromise, timeoutPromise]);
+        // Test database connection first
+        const dbConnected = await testDatabaseConnection();
+        if (dbConnected && isMounted) {
+          // Fetch data even if schema might not be complete
+          await Promise.allSettled([
+            fetchFoodPosts(),
+            fetchGroups()
+          ]);
+          
+          console.log('App initialization complete');
+        } else if (isMounted) {
+          console.log('Database connection failed, but continuing with app initialization');
+          // Continue with app initialization even if database connection fails
+          await Promise.allSettled([
+            fetchFoodPosts(),
+            fetchGroups()
+          ]);
+        }
       } catch (error) {
         console.error('Error initializing app:', error);
-        // Show a helpful message if schema setup is needed
-        if (error.message === 'Initialization timeout') {
-          toast({
-            title: "Initialization Timeout",
-            description: "App is taking longer than expected. Please refresh the page.",
-            variant: "destructive"
-          });
-        } else {
-          toast({
-            title: "Setup Required",
-            description: "Database schema may need setup. Run 'npm run setup-db' for instructions.",
-            variant: "default"
-          });
-        }
+        // Set empty arrays to prevent UI errors
+        setFoodPosts([]);
+        setGroups([]);
       } finally {
         if (isMounted) {
           setInitializing(false);
@@ -541,7 +533,10 @@ const Index = () => {
           .order('created_at', { ascending: false })
           .limit(10);
 
-        if (error) throw error;
+        if (error) {
+          console.error('Error fetching notifications:', error);
+          return;
+        }
 
         console.log('Notifications fetched:', data?.length || 0);
         setNotifications(data || []);
@@ -553,6 +548,61 @@ const Index = () => {
 
     fetchNotifications();
   }, [user?.id]); // Only depend on user ID
+
+  // Real-time subscriptions
+  useEffect(() => {
+    if (!user) return; // Only subscribe if user is authenticated
+    
+    try {
+      // Subscribe to food posts changes
+      const foodPostsChannel = supabase
+        .channel('food_posts_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'food_posts'
+          },
+          () => {
+            console.log('Food posts changed, refreshing...');
+            fetchFoodPosts();
+          }
+        )
+        .subscribe();
+
+      // Subscribe to notifications
+      const notificationsChannel = supabase
+        .channel('notifications_changes')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            console.log('New notification received:', payload);
+            const newNotification = payload.new as Notification;
+            setNotifications(prev => [newNotification, ...prev]);
+            setUnreadCount(prev => prev + 1);
+            toast({
+              title: newNotification.title,
+              description: newNotification.message,
+            });
+          }
+        )
+        .subscribe();
+
+      return () => {
+        foodPostsChannel.unsubscribe();
+        notificationsChannel.unsubscribe();
+      };
+    } catch (error) {
+      console.error('Error setting up real-time subscriptions:', error);
+    }
+  }, [user, fetchFoodPosts, toast]); // Only depend on user ID
 
   const handleAvail = async (id: string) => {
     if (!user) {
