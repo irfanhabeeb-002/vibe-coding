@@ -1,42 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Food Sharing App Design System - Apple-inspired */
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Apple-inspired color palette */
+    --background: 0 0% 99%;
+    --foreground: 240 10% 3.9%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 240 10% 3.9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 240 10% 3.9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    /* Green for food/available theme */
+    --primary: 142 76% 36%;
+    --primary-foreground: 0 0% 98%;
+    --primary-light: 142 76% 45%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    /* Warm secondary colors */
+    --secondary: 46 100% 50%;
+    --secondary-foreground: 240 10% 3.9%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 142 76% 94%;
+    --accent-foreground: 142 76% 36%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 142 76% 36%;
 
-    --radius: 0.5rem;
+    --radius: 12px;
+
+    /* Custom food app colors */
+    --food-orange: 25 95% 53%;
+    --food-red: 0 84% 60%;
+    --food-green: 142 76% 36%;
+    --surface-1: 0 0% 98%;
+    --surface-2: 240 4.8% 95.9%;
+    
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(142 76% 36%), hsl(142 76% 45%));
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%), hsl(240 4.8% 97%));
+    --gradient-button: linear-gradient(135deg, hsl(142 76% 36%), hsl(142 76% 42%));
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(240 5.9% 10% / 0.05);
+    --shadow-card: 0 4px 6px -1px hsl(240 5.9% 10% / 0.1), 0 2px 4px -1px hsl(240 5.9% 10% / 0.06);
+    --shadow-lg: 0 10px 15px -3px hsl(240 5.9% 10% / 0.1), 0 4px 6px -2px hsl(240 5.9% 10% / 0.05);
+    
+    /* Typography */
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+    --font-size-3xl: 1.875rem;
 
     --sidebar-background: 0 0% 98%;
 
@@ -100,6 +130,103 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-['SF_Pro_Display',system-ui,sans-serif] antialiased;
+  }
+}
+
+@layer components {
+  /* Apple-style button animations */
+  .btn-apple {
+    @apply transition-all duration-200 ease-out transform active:scale-95 hover:shadow-lg;
+  }
+  
+  .btn-primary {
+    @apply bg-gradient-to-br from-primary to-primary-light text-primary-foreground font-medium;
+    box-shadow: var(--shadow-card);
+  }
+  
+  .btn-primary:hover {
+    @apply shadow-lg transform translate-y-[-1px];
+  }
+  
+  /* Card animations */
+  .card-apple {
+    @apply transition-all duration-300 ease-out hover:shadow-lg hover:transform hover:translate-y-[-2px];
+    background: var(--gradient-card);
+    box-shadow: var(--shadow-card);
+  }
+  
+  /* Food card special effects */
+  .food-card {
+    @apply relative overflow-hidden;
+  }
+  
+  .food-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    transition: left 0.5s ease-in-out;
+  }
+  
+  .food-card:hover::before {
+    left: 100%;
+  }
+  
+  /* Smooth fade-in animation */
+  .fade-in {
+    animation: fadeIn 0.6s ease-out;
+  }
+  
+  .slide-up {
+    animation: slideUp 0.5s ease-out;
+  }
+  
+  /* Status indicators */
+  .status-available {
+    @apply text-primary bg-accent;
+  }
+  
+  .status-limited {
+    @apply text-orange-600 bg-orange-50;
+    color: hsl(var(--food-orange));
+    background-color: hsl(var(--food-orange) / 0.1);
+  }
+  
+  .status-full {
+    @apply text-red-600 bg-red-50;
+    color: hsl(var(--food-red));
+    background-color: hsl(var(--food-red) / 0.1);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
