@@ -1,4 +1,4 @@
-import { MapPin, Clock, Users } from "lucide-react";
+import { MapPin, Clock, Users, Flag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -11,7 +11,10 @@ interface FoodCardProps {
   totalCount: number;
   postedBy: string;
   distance?: string;
+  description?: string;
+  availableUntil?: string;
   onAvail: (id: string) => void;
+  onReport?: (post: any) => void;
 }
 
 export const FoodCard = ({
@@ -23,21 +26,52 @@ export const FoodCard = ({
   totalCount,
   postedBy,
   distance,
-  onAvail
+  description,
+  availableUntil,
+  onAvail,
+  onReport
 }: FoodCardProps) => {
-  const availabilityStatus = count > 5 ? 'available' : count > 0 ? 'limited' : 'full';
+  const isExpired = availableUntil ? new Date(availableUntil) < new Date() : false;
+  const availabilityStatus = isExpired ? 'expired' : count > 5 ? 'available' : count > 0 ? 'limited' : 'full';
   
   const getStatusClasses = () => {
     switch (availabilityStatus) {
       case 'available': return 'status-available';
       case 'limited': return 'status-limited';
       case 'full': return 'status-full';
+      case 'expired': return 'bg-gray-500 text-white';
       default: return 'status-available';
     }
   };
 
+  const handleReport = () => {
+    if (onReport) {
+      onReport({
+        id,
+        title,
+        location,
+        time,
+        count,
+        totalCount,
+        postedBy,
+        distance
+      });
+    }
+  };
+
   return (
-    <Card className="food-card card-apple p-6 mb-4 fade-in">
+    <Card className="food-card card-apple p-6 mb-4 fade-in group relative">
+      {/* Report button - appears on hover */}
+      {onReport && (
+        <button
+          onClick={handleReport}
+          className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+          title="Report this post"
+        >
+          <Flag className="w-4 h-4" />
+        </button>
+      )}
+      
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1">
           <h3 className="font-semibold text-lg mb-2 text-balance">{title}</h3>
@@ -55,11 +89,16 @@ export const FoodCard = ({
               <Users className="w-4 h-4 mr-2 text-primary" />
               <span>Posted by {postedBy}</span>
             </div>
+            {description && (
+              <div className="text-muted-foreground text-sm mt-2">
+                {description}
+              </div>
+            )}
           </div>
         </div>
         
         <div className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusClasses()}`}>
-          {count} left
+          {isExpired ? 'Expired' : `${count} left`}
         </div>
       </div>
       
@@ -78,11 +117,11 @@ export const FoodCard = ({
         
         <Button 
           onClick={() => onAvail(id)}
-          disabled={count === 0}
+          disabled={count === 0 || isExpired}
           className="btn-apple btn-primary px-6"
           size="sm"
         >
-          {count === 0 ? 'Full' : 'Avail'}
+          {isExpired ? 'Expired' : count === 0 ? 'Unavailable' : 'Avail'}
         </Button>
       </div>
     </Card>
