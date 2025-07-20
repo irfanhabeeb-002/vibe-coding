@@ -17,6 +17,7 @@
      ```
      https://xzvifxqwrozipoyqswva.supabase.co/auth/v1/callback
      http://localhost:5173/auth/v1/callback (for development)
+     https://vibe-coding-nu-tawny.vercel.app/auth/v1/callback (for production)
      ```
 5. Copy the Client ID and Client Secret
 
@@ -54,6 +55,12 @@ VITE_SUPABASE_ANON_KEY=your_anon_key_here
 1. **"Invalid redirect URI" error:**
    - Make sure the redirect URI in Google Cloud Console matches exactly
    - Include both production and development URLs
+   - For mobile devices, ensure the redirect URL is accessible on mobile browsers
+
+2. **"redirect_url_mismatch" error on mobile:**
+   - Add your Vercel production URL to Google Cloud Console authorized redirect URIs
+   - Ensure Supabase site URL includes your production domain
+   - Check that mobile browsers can access the redirect URL
 
 2. **"Provider not enabled" error:**
    - Check that Google provider is enabled in Supabase dashboard
