@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { MapPin, Navigation, Loader2, AlertCircle } from "lucide-react";
+import { MapPin, Navigation, Loader2, AlertCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,9 +39,33 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
     }
   }, [userLocation]);
 
+  const updateUserLocation = async (latitude: number, longitude: number) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          latitude,
+          longitude,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('Error updating user location:', error);
+      } else {
+        console.log('User location updated successfully');
+      }
+    } catch (error) {
+      console.error('Error updating user location:', error);
+    }
+  };
+
   const getUserLocation = async () => {
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
+      setLocationPermission('denied');
       return;
     }
 
@@ -60,45 +84,32 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
       const { latitude, longitude } = position.coords;
       setUserLocation({ lat: latitude, lng: longitude });
       setLocationPermission('granted');
-
+      console.log('Location obtained:', { latitude, longitude });
+      
       // Update user's location in profile
-      if (user) {
-        await updateUserLocation(latitude, longitude);
-      }
+      await updateUserLocation(latitude, longitude);
     } catch (err: any) {
-      console.error('Error getting location:', err);
+      console.error('Geolocation error:', err);
       setLocationPermission('denied');
       
-      if (err.code === 1) {
-        setError('Location access denied. Please enable location services to see nearby posts.');
-      } else if (err.code === 2) {
-        setError('Location unavailable. Please check your device settings.');
-      } else if (err.code === 3) {
-        setError('Location request timed out. Please try again.');
-      } else {
-        setError('Failed to get your location. Please try again.');
+      let errorMessage = 'Failed to get your location';
+      switch (err.code) {
+        case err.PERMISSION_DENIED:
+          errorMessage = 'Location access denied. Please enable location services in your browser settings.';
+          break;
+        case err.POSITION_UNAVAILABLE:
+          errorMessage = 'Location information is unavailable. Please try again.';
+          break;
+        case err.TIMEOUT:
+          errorMessage = 'Location request timed out. Please try again.';
+          break;
+        default:
+          errorMessage = 'An unknown error occurred while getting your location.';
       }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const updateUserLocation = async (latitude: number, longitude: number) => {
-    try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          latitude,
-          longitude,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.id);
-
-      if (error) {
-        console.error('Error updating user location:', error);
-      }
-    } catch (error) {
-      console.error('Error updating user location:', error);
     }
   };
 
@@ -109,6 +120,8 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
     setError(null);
 
     try {
+      console.log('Fetching nearby posts for location:', userLocation);
+      
       // Use the database function to get nearby posts
       const { data, error } = await supabase
         .rpc('get_nearby_food_posts', {
@@ -117,7 +130,12 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
           radius_km: 10 // 10km radius
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+
+      console.log('Nearby posts found:', data?.length || 0);
 
       // Transform the data to include distance formatting
       const postsWithDistance = (data || []).map((post: any) => ({
@@ -126,9 +144,11 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
       }));
 
       setNearbyPosts(postsWithDistance);
+      setError(null);
     } catch (error) {
       console.error('Error fetching nearby posts:', error);
-      setError('Failed to fetch nearby posts. Please try again.');
+      setError('Failed to fetch nearby posts. Please check your internet connection and try again.');
+      setNearbyPosts([]);
     } finally {
       setLoading(false);
     }
@@ -152,6 +172,23 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
           <p className="text-muted-foreground">Getting your location...</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Please allow location access when prompted
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && userLocation) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Finding nearby food...</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Searching within 10km of your location
+          </p>
         </div>
       </div>
     );
@@ -216,10 +253,25 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
 
       {/* Error State */}
       {error && (
-        <Card className="p-4 border-orange-200 bg-orange-50">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-orange-500" />
-            <p className="text-sm text-orange-700">{error}</p>
+        <Card className="p-6 text-center">
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h3 className="text-lg font-semibold mb-2 text-red-700">Location Error</h3>
+          <p className="text-muted-foreground mb-4">{error}</p>
+          <div className="space-y-2">
+            <Button onClick={handleRefresh} variant="outline" className="w-full">
+              <Navigation className="w-4 h-4 mr-2" />
+              Try Again
+            </Button>
+            {locationPermission === 'denied' && (
+              <div className="text-xs text-muted-foreground">
+                <p>To enable location access:</p>
+                <ul className="list-disc list-inside mt-1 space-y-1">
+                  <li>Click the location icon in your browser's address bar</li>
+                  <li>Select "Allow" for location access</li>
+                  <li>Refresh the page and try again</li>
+                </ul>
+              </div>
+            )}
           </div>
         </Card>
       )}
@@ -234,10 +286,15 @@ export const NearbySection = ({ user, onClaim, onReport }: NearbySectionProps) =
               <p className="text-muted-foreground mb-4">
                 There are no active food posts within 10km of your location.
               </p>
-              <Button onClick={handleRefresh} variant="outline">
-                <Navigation className="w-4 h-4 mr-2" />
-                Refresh Location
-              </Button>
+              <div className="space-y-2">
+                <Button onClick={handleRefresh} variant="outline">
+                  <Navigation className="w-4 h-4 mr-2" />
+                  Refresh Location
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Your location: {userLocation?.lat.toFixed(4)}, {userLocation?.lng.toFixed(4)}
+                </p>
+              </div>
             </Card>
           ) : (
             <div className="space-y-4">

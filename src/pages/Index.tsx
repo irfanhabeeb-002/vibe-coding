@@ -792,10 +792,39 @@ const Index = () => {
 
   const handleReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !reportingPost || !reportReason.trim()) return;
+    if (!user || !reportingPost || !reportReason.trim()) {
+      toast({
+        title: "Error",
+        description: "Please fill in all required fields.",
+        variant: "destructive"
+      });
+      return;
+    }
 
     setReportLoading(true);
     try {
+      // Check if user has already reported this post
+      const { data: existingReport, error: checkError } = await supabase
+        .from('reports')
+        .select('id')
+        .eq('reported_by', user.id)
+        .eq('food_post_id', reportingPost.id)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "not found"
+        console.error('Error checking existing report:', checkError);
+      }
+
+      if (existingReport) {
+        toast({
+          title: "Already Reported",
+          description: "You have already reported this post.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Submit the report
       const { error } = await supabase
         .from('reports')
         .insert({
@@ -805,13 +834,17 @@ const Index = () => {
           description: reportDescription || null
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Report submission error:', error);
+        throw error;
+      }
 
       toast({
         title: "Report Submitted",
-        description: "Thank you for your report. We'll review it shortly.",
+        description: "Thank you for your report. We'll review it shortly and take appropriate action.",
       });
 
+      // Reset form
       setReportReason('');
       setReportDescription('');
       setReportingPost(null);
@@ -820,7 +853,7 @@ const Index = () => {
       console.error('Report error:', error);
       toast({
         title: "Error",
-        description: "Failed to submit report. Please try again.",
+        description: "Failed to submit report. Please try again or contact support if the issue persists.",
         variant: "destructive"
       });
     } finally {
@@ -861,6 +894,8 @@ const Index = () => {
       const { latitude, longitude } = position.coords;
       
       try {
+        console.log('Fetching nearby posts for location:', { latitude, longitude });
+        
         // Use the new database function for better performance
         const { data, error } = await supabase
           .rpc('get_nearby_food_posts', {
@@ -869,36 +904,74 @@ const Index = () => {
             radius_km: 10
           });
 
-        if (error) throw error;
+        if (error) {
+          console.error('Database error:', error);
+          throw error;
+        }
+
+        console.log('Nearby posts found:', data?.length || 0);
 
         // Get user profiles for the posts
         const postsWithProfiles = await Promise.all(
           (data || []).map(async (post) => {
-            const { data: profileData } = await supabase
-              .from('profiles')
-              .select('full_name')
-              .eq('user_id', post.posted_by)
-              .single();
-            
-            return {
-              ...post,
-              profiles: profileData,
-              distance: `${post.distance_km.toFixed(1)} km`,
-              is_group_only: (post as any).is_group_only || false
-            } as FoodPost;
+            try {
+              const { data: profileData } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('user_id', post.posted_by)
+                .single();
+              
+              return {
+                ...post,
+                profiles: profileData,
+                distance: `${post.distance_km.toFixed(1)} km`,
+                is_group_only: (post as any).is_group_only || false
+              } as FoodPost;
+            } catch (profileError) {
+              console.error('Error fetching profile for post:', post.id, profileError);
+              return {
+                ...post,
+                profiles: { full_name: 'Unknown' },
+                distance: `${post.distance_km.toFixed(1)} km`,
+                is_group_only: (post as any).is_group_only || false
+              } as FoodPost;
+            }
           })
         );
 
         setNearbyPosts(postsWithProfiles);
+        setNearbyError(null);
       } catch (error) {
-        setNearbyError("Failed to fetch nearby posts.");
         console.error('Nearby posts error:', error);
+        setNearbyError("Failed to fetch nearby posts. Please check your internet connection and try again.");
+        setNearbyPosts([]);
       } finally {
         setNearbyLoading(false);
       }
     }, (err) => {
-      setNearbyError("Failed to get your location.");
+      console.error('Geolocation error:', err);
+      let errorMessage = "Failed to get your location.";
+      
+      switch (err.code) {
+        case err.PERMISSION_DENIED:
+          errorMessage = "Location access denied. Please enable location services in your browser settings.";
+          break;
+        case err.POSITION_UNAVAILABLE:
+          errorMessage = "Location information is unavailable. Please try again.";
+          break;
+        case err.TIMEOUT:
+          errorMessage = "Location request timed out. Please try again.";
+          break;
+        default:
+          errorMessage = "An unknown error occurred while getting your location.";
+      }
+      
+      setNearbyError(errorMessage);
       setNearbyLoading(false);
+    }, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 300000 // 5 minutes
     });
   }, []);
 
@@ -1038,6 +1111,151 @@ const Index = () => {
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    if (!user || notifications.length === 0) return;
+    
+    try {
+      const unreadNotifications = notifications.filter(n => !n.is_read);
+      if (unreadNotifications.length === 0) return;
+      
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+      
+      if (error) {
+        console.error('Error marking all notifications as read:', error);
+        return;
+      }
+      
+      setNotifications(prev => 
+        prev.map(n => ({ ...n, is_read: true }))
+      );
+      setUnreadCount(0);
+      
+      toast({
+        title: "Notifications Updated",
+        description: "All notifications marked as read.",
+      });
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+    }
+  };
+
+  const handleApproveJoinRequest = async (notification: Notification) => {
+    try {
+      // Get the join request details from the related_id
+      const { data: joinRequest, error: fetchError } = await supabase
+        .from('group_join_requests')
+        .select('*')
+        .eq('id', notification.related_id)
+        .single();
+
+      if (fetchError || !joinRequest) {
+        console.error('Error fetching join request:', fetchError);
+        alert('Could not find the join request.');
+        return;
+      }
+
+      // Use the database function to approve the member
+      const { data, error } = await supabase
+        .rpc('approve_group_member', {
+          group_uuid: joinRequest.group_id,
+          user_uuid: joinRequest.user_id,
+          admin_uuid: user.id
+        });
+
+      if (error) throw error;
+
+      if (data) {
+        // Show success message
+        toast({
+          title: "Request Approved",
+          description: "Join request approved successfully!",
+        });
+        
+        // Remove the notification from the list instead of marking as read
+        setNotifications(prev => prev.filter(n => n.id !== notification.id));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+        
+        // Refresh groups to update counts
+        fetchGroups();
+      } else {
+        alert('Failed to approve request. You may not have permission.');
+      }
+    } catch (error) {
+      console.error('Error approving join request:', error);
+      toast({
+        title: "Error",
+        description: "Failed to approve join request. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleRejectJoinRequest = async (notification: Notification) => {
+    try {
+      // Get the join request details from the related_id
+      const { data: joinRequest, error: fetchError } = await supabase
+        .from('group_join_requests')
+        .select('*')
+        .eq('id', notification.related_id)
+        .single();
+
+      if (fetchError || !joinRequest) {
+        console.error('Error fetching join request:', fetchError);
+        alert('Could not find the join request.');
+        return;
+      }
+
+      // Use the database function to reject the member
+      const { data, error } = await supabase
+        .rpc('reject_group_member', {
+          group_uuid: joinRequest.group_id,
+          user_uuid: joinRequest.user_id,
+          admin_uuid: user.id
+        });
+
+      if (error) throw error;
+
+      if (data) {
+        // Show success message
+        toast({
+          title: "Request Rejected",
+          description: "Join request rejected successfully!",
+        });
+        
+        // Remove the notification from the list instead of marking as read
+        setNotifications(prev => prev.filter(n => n.id !== notification.id));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+        
+        // Refresh groups to update counts
+        fetchGroups();
+      } else {
+        alert('Failed to reject request. You may not have permission.');
+      }
+    } catch (error) {
+      console.error('Error rejecting join request:', error);
+      toast({
+        title: "Error",
+        description: "Failed to reject join request. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Check if user is admin of the group for a join request notification
+  const isAdminOfJoinRequest = (notification: Notification) => {
+    if (!user || notification.type !== 'join_request' || !notification.related_id) {
+      return false;
+    }
+    
+    // For now, check if user is admin of any group
+    // In a more sophisticated implementation, we could cache the join request data
+    return groups.some(group => group.admin_id === user.id);
   };
 
   const renderTabContent = () => {
@@ -1268,7 +1486,12 @@ const Index = () => {
         {renderTabContent()}
       </main>
       
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomNav 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab} 
+        unreadCount={unreadCount}
+        onNotificationClick={() => setIsNotificationModalOpen(true)}
+      />
       
       <NewPostModal
         isOpen={isNewPostOpen}
@@ -1318,12 +1541,22 @@ const Index = () => {
             <div className="card-apple h-full flex flex-col p-6">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-semibold">Notifications</h2>
-                <button
-                  onClick={() => setIsNotificationModalOpen(false)}
-                  className="p-2 hover:bg-muted rounded"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={markAllNotificationsAsRead}
+                      className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded transition-colors"
+                    >
+                      Mark All Read
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsNotificationModalOpen(false)}
+                    className="p-2 hover:bg-muted rounded"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {notifications.length === 0 ? (
@@ -1338,13 +1571,53 @@ const Index = () => {
                         className={`p-3 rounded border ${
                           !notification.is_read ? 'bg-accent border-primary' : 'bg-background'
                         }`}
-                        onClick={() => markNotificationAsRead(notification.id)}
                       >
-                        <div className="font-semibold text-sm">{notification.title}</div>
-                        <div className="text-xs text-muted-foreground">{notification.message}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {new Date(notification.created_at).toLocaleString()}
+                        <div className="cursor-pointer">
+                          <div className="font-semibold text-sm">{notification.title}</div>
+                          <div className="text-xs text-muted-foreground">{notification.message}</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {new Date(notification.created_at).toLocaleString()}
+                          </div>
                         </div>
+                        
+                        {/* Show accept/reject buttons for join request notifications */}
+                        {notification.type === 'join_request' && isAdminOfJoinRequest(notification) && (
+                          <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleApproveJoinRequest(notification);
+                              }}
+                              className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs py-2 px-3 rounded transition-colors"
+                            >
+                              ✓ Approve
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRejectJoinRequest(notification);
+                              }}
+                              className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs py-2 px-3 rounded transition-colors"
+                            >
+                              ✗ Reject
+                            </button>
+                          </div>
+                        )}
+                        
+                        {/* Show mark as read button for all notifications */}
+                        {!notification.is_read && (
+                          <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markNotificationAsRead(notification.id);
+                              }}
+                              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs py-2 px-3 rounded transition-colors"
+                            >
+                              ✓ Mark as Read
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1375,11 +1648,13 @@ const Index = () => {
                   <p className="text-sm text-muted-foreground">{reportingPost.description}</p>
                 </div>
                 <div className="mb-4">
-                  <label className="block text-sm font-medium mb-2">Reason for Report</label>
+                  <label className="block text-sm font-medium mb-2">Reason for Report *</label>
                   <select
                     value={reportReason}
                     onChange={(e) => setReportReason(e.target.value)}
-                    className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary ${
+                      reportReason === '' ? 'border-red-300' : 'border-gray-300'
+                    }`}
                     required
                   >
                     <option value="">Select a reason</option>
@@ -1389,6 +1664,9 @@ const Index = () => {
                     <option value="expired_food">Expired Food</option>
                     <option value="other">Other</option>
                   </select>
+                  {reportReason === '' && (
+                    <p className="text-red-500 text-xs mt-1">Please select a reason for reporting</p>
+                  )}
                 </div>
                 <div className="mb-6">
                   <label className="block text-sm font-medium mb-2">Additional Details (Optional)</label>
@@ -1403,7 +1681,12 @@ const Index = () => {
                 <div className="flex gap-3 mt-auto">
                   <button
                     type="button"
-                    onClick={() => setIsReportModalOpen(false)}
+                    onClick={() => {
+                      setReportReason('');
+                      setReportDescription('');
+                      setReportingPost(null);
+                      setIsReportModalOpen(false);
+                    }}
                     className="flex-1 p-3 border rounded-lg hover:bg-muted"
                     disabled={reportLoading}
                   >
@@ -1412,7 +1695,7 @@ const Index = () => {
                   <button
                     type="submit"
                     className="flex-1 p-3 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50"
-                    disabled={reportLoading}
+                    disabled={reportLoading || !reportReason.trim()}
                   >
                     {reportLoading ? 'Submitting...' : 'Submit Report'}
                   </button>

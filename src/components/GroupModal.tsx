@@ -268,6 +268,9 @@ export const GroupModal = ({
 
       if (error) throw error;
 
+      // Show success message
+      alert('Member approved successfully!');
+      
       // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
@@ -291,6 +294,9 @@ export const GroupModal = ({
 
       if (error) throw error;
 
+      // Show success message
+      alert('Member rejected successfully!');
+      
       // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
@@ -317,6 +323,8 @@ export const GroupModal = ({
       if (error) throw error;
 
       if (data) {
+        // Show success message
+        alert('Join request approved successfully!');
         // Refresh the requests and members lists
         if (selectedGroup) {
           fetchJoinRequests(selectedGroup.id);
@@ -347,6 +355,8 @@ export const GroupModal = ({
       if (error) throw error;
 
       if (data) {
+        // Show success message
+        alert('Join request rejected successfully!');
         // Refresh the requests list
         if (selectedGroup) {
           fetchJoinRequests(selectedGroup.id);
@@ -373,6 +383,9 @@ export const GroupModal = ({
 
       if (error) throw error;
 
+      // Show success message
+      alert('Member removed successfully!');
+      
       // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
@@ -719,18 +732,21 @@ export const GroupModal = ({
                                     {member.status === 'pending' && (
                                       <>
                                         <Button
-                                          variant="outline"
+                                          variant="default"
                                           size="sm"
                                           onClick={() => handleApproveMember(member.id)}
+                                          className="bg-green-600 hover:bg-green-700 text-white"
                                         >
-                                          <Check className="w-4 h-4" />
+                                          <Check className="w-4 h-4 mr-1" />
+                                          Approve
                                         </Button>
                                         <Button
-                                          variant="outline"
+                                          variant="destructive"
                                           size="sm"
                                           onClick={() => handleRejectMember(member.id)}
                                         >
-                                          <XIcon className="w-4 h-4" />
+                                          <XIcon className="w-4 h-4 mr-1" />
+                                          Reject
                                         </Button>
                                       </>
                                     )}
@@ -740,7 +756,8 @@ export const GroupModal = ({
                                         size="sm"
                                         onClick={() => handleRemoveMember(member.id)}
                                       >
-                                        <UserMinus className="w-4 h-4" />
+                                        <UserMinus className="w-4 h-4 mr-1" />
+                                        Remove
                                       </Button>
                                     )}
                                   </div>
@@ -784,18 +801,21 @@ export const GroupModal = ({
                                 {isGroupAdmin(selectedGroup) && (
                                   <div className="flex items-center gap-2">
                                     <Button
-                                      variant="outline"
+                                      variant="default"
                                       size="sm"
                                       onClick={() => handleApproveJoinRequest(request.id)}
+                                      className="bg-green-600 hover:bg-green-700 text-white"
                                     >
-                                      <Check className="w-4 h-4" />
+                                      <Check className="w-4 h-4 mr-1" />
+                                      Approve
                                     </Button>
                                     <Button
-                                      variant="outline"
+                                      variant="destructive"
                                       size="sm"
                                       onClick={() => handleRejectJoinRequest(request.id)}
                                     >
-                                      <XIcon className="w-4 h-4" />
+                                      <XIcon className="w-4 h-4 mr-1" />
+                                      Reject
                                     </Button>
                                   </div>
                                 )}
