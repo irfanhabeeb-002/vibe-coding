@@ -4,6 +4,9 @@ CREATE TABLE public.profiles (
   user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT,
   avatar_url TEXT,
+  location TEXT,
+  latitude DECIMAL(10, 8),
+  longitude DECIMAL(11, 8),
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -14,6 +17,8 @@ CREATE TABLE public.groups (
   name TEXT NOT NULL,
   description TEXT,
   admin_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  is_private BOOLEAN NOT NULL DEFAULT false,
+  max_members INTEGER DEFAULT 100,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -24,6 +29,7 @@ CREATE TABLE public.group_members (
   group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'moderator', 'member')),
   joined_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   approved_at TIMESTAMP WITH TIME ZONE,
   approved_by UUID REFERENCES auth.users(id),
@@ -56,6 +62,7 @@ CREATE TABLE public.food_posts (
   posted_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   group_id UUID REFERENCES public.groups(id) ON DELETE SET NULL,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  is_group_only BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -75,7 +82,7 @@ CREATE TABLE public.notifications (
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   message TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('new_post', 'group_invite', 'post_update', 'report_status', 'join_request', 'join_approved', 'join_rejected')),
+  type TEXT NOT NULL CHECK (type IN ('new_post', 'group_invite', 'post_update', 'report_status', 'join_request', 'join_approved', 'join_rejected', 'member_removed', 'group_post')),
   related_id UUID, -- Can reference food_posts, groups, etc.
   is_read BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
@@ -87,6 +94,7 @@ CREATE TABLE public.reports (
   reported_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   food_post_id UUID REFERENCES public.food_posts(id) ON DELETE CASCADE,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  group_id UUID REFERENCES public.groups(id) ON DELETE CASCADE,
   reason TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
@@ -140,6 +148,16 @@ CREATE POLICY "Group admins can update join requests" ON public.group_join_reque
 
 -- RLS Policies for food posts
 CREATE POLICY "Users can view active food posts" ON public.food_posts FOR SELECT USING (is_active = true);
+CREATE POLICY "Group members can view group posts" ON public.food_posts FOR SELECT USING (
+  is_group_only = false OR 
+  group_id IS NULL OR
+  EXISTS (
+    SELECT 1 FROM public.group_members 
+    WHERE group_id = food_posts.group_id 
+    AND user_id = auth.uid() 
+    AND status = 'approved'
+  )
+);
 CREATE POLICY "Users can create food posts" ON public.food_posts FOR INSERT WITH CHECK (auth.uid() = posted_by);
 CREATE POLICY "Post creators can update their posts" ON public.food_posts FOR UPDATE USING (auth.uid() = posted_by);
 CREATE POLICY "Post creators can delete their posts" ON public.food_posts FOR DELETE USING (auth.uid() = posted_by);
@@ -223,7 +241,7 @@ BEGIN
       gm.user_id,
       'New Food Available!',
       'New food post: ' || NEW.title || ' at ' || NEW.location,
-      'new_post',
+      'group_post',
       NEW.id
     FROM public.group_members gm
     WHERE gm.group_id = NEW.group_id 
@@ -255,22 +273,25 @@ BEGIN
       NEW.id
     FROM public.groups g
     WHERE g.id = NEW.group_id;
-  ELSIF TG_OP = 'UPDATE' AND OLD.status = 'pending' AND NEW.status IN ('approved', 'rejected') THEN
-    -- Notify user about join request status
+  ELSIF TG_OP = 'UPDATE' AND NEW.status != OLD.status THEN
+    -- Notify user about join request status change
     INSERT INTO public.notifications (user_id, title, message, type, related_id)
     SELECT 
       NEW.user_id,
       CASE 
-        WHEN NEW.status = 'approved' THEN 'Join Request Approved!'
-        ELSE 'Join Request Rejected'
+        WHEN NEW.status = 'approved' THEN 'Join Request Approved'
+        WHEN NEW.status = 'rejected' THEN 'Join Request Rejected'
+        ELSE 'Join Request Updated'
       END,
       CASE 
         WHEN NEW.status = 'approved' THEN 'Your request to join the group has been approved!'
-        ELSE 'Your request to join the group has been rejected.'
+        WHEN NEW.status = 'rejected' THEN 'Your request to join the group has been rejected.'
+        ELSE 'Your join request status has been updated.'
       END,
       CASE 
         WHEN NEW.status = 'approved' THEN 'join_approved'
-        ELSE 'join_rejected'
+        WHEN NEW.status = 'rejected' THEN 'join_rejected'
+        ELSE 'join_request'
       END,
       NEW.id
     FROM public.groups g
@@ -322,8 +343,9 @@ CREATE INDEX idx_food_posts_active_until ON public.food_posts (is_active, availa
 CREATE INDEX idx_group_members_status ON public.group_members (group_id, status);
 CREATE INDEX idx_notifications_user_read ON public.notifications (user_id, is_read);
 CREATE INDEX idx_group_join_requests_status ON public.group_join_requests (group_id, status);
+CREATE INDEX idx_profiles_location ON public.profiles USING GIST (ll_to_earth(latitude, longitude));
 
--- Create function to find nearby food posts
+-- Create function to get nearby food posts
 CREATE OR REPLACE FUNCTION public.get_nearby_food_posts(
   user_lat DECIMAL(10, 8),
   user_lng DECIMAL(11, 8),
@@ -353,7 +375,7 @@ BEGIN
     earth_distance(
       ll_to_earth(user_lat, user_lng),
       ll_to_earth(fp.latitude, fp.longitude)
-    ) / 1000 as distance_km
+    ) / 1000.0 as distance_km
   FROM public.food_posts fp
   WHERE fp.is_active = true
     AND fp.available_until > now()
@@ -362,7 +384,111 @@ BEGIN
     AND earth_distance(
       ll_to_earth(user_lat, user_lng),
       ll_to_earth(fp.latitude, fp.longitude)
-    ) <= radius_km * 1000
-  ORDER BY distance_km;
+    ) <= (radius_km * 1000)
+  ORDER BY distance_km ASC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create function to get user's approved groups
+CREATE OR REPLACE FUNCTION public.get_user_groups(user_uuid UUID)
+RETURNS TABLE (
+  group_id UUID,
+  group_name TEXT,
+  group_description TEXT,
+  admin_id UUID,
+  admin_name TEXT,
+  member_count BIGINT,
+  user_role TEXT,
+  user_status TEXT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    g.id as group_id,
+    g.name as group_name,
+    g.description as group_description,
+    g.admin_id,
+    p.full_name as admin_name,
+    COUNT(gm2.id) as member_count,
+    gm.role as user_role,
+    gm.status as user_status
+  FROM public.groups g
+  LEFT JOIN public.profiles p ON g.admin_id = p.user_id
+  LEFT JOIN public.group_members gm ON g.id = gm.group_id AND gm.user_id = user_uuid
+  LEFT JOIN public.group_members gm2 ON g.id = gm2.group_id AND gm2.status = 'approved'
+  WHERE g.admin_id = user_uuid OR (gm.user_id = user_uuid AND gm.status = 'approved')
+  GROUP BY g.id, g.name, g.description, g.admin_id, p.full_name, gm.role, gm.status
+  ORDER BY g.created_at DESC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create function to handle group member approval
+CREATE OR REPLACE FUNCTION public.approve_group_member(
+  group_uuid UUID,
+  user_uuid UUID,
+  admin_uuid UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  is_admin BOOLEAN;
+BEGIN
+  -- Check if the user is the admin of the group
+  SELECT EXISTS(
+    SELECT 1 FROM public.groups 
+    WHERE id = group_uuid AND admin_id = admin_uuid
+  ) INTO is_admin;
+  
+  IF NOT is_admin THEN
+    RETURN FALSE;
+  END IF;
+  
+  -- Update the join request status
+  UPDATE public.group_join_requests 
+  SET status = 'approved', updated_at = now()
+  WHERE group_id = group_uuid AND user_id = user_uuid;
+  
+  -- Add user to group members with approved status
+  INSERT INTO public.group_members (group_id, user_id, status, approved_at, approved_by)
+  VALUES (group_uuid, user_uuid, 'approved', now(), admin_uuid)
+  ON CONFLICT (group_id, user_id) 
+  DO UPDATE SET 
+    status = 'approved',
+    approved_at = now(),
+    approved_by = admin_uuid;
+  
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Create function to handle group member rejection
+CREATE OR REPLACE FUNCTION public.reject_group_member(
+  group_uuid UUID,
+  user_uuid UUID,
+  admin_uuid UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+  is_admin BOOLEAN;
+BEGIN
+  -- Check if the user is the admin of the group
+  SELECT EXISTS(
+    SELECT 1 FROM public.groups 
+    WHERE id = group_uuid AND admin_id = admin_uuid
+  ) INTO is_admin;
+  
+  IF NOT is_admin THEN
+    RETURN FALSE;
+  END IF;
+  
+  -- Update the join request status
+  UPDATE public.group_join_requests 
+  SET status = 'rejected', updated_at = now()
+  WHERE group_id = group_uuid AND user_id = user_uuid;
+  
+  -- Remove user from group members if they exist
+  DELETE FROM public.group_members 
+  WHERE group_id = group_uuid AND user_id = user_uuid;
+  
+  RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER; 

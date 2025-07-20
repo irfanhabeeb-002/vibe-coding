@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Users, Edit, Trash2, Check, X as XIcon, UserPlus, UserMinus, Clock } from "lucide-react";
+import { X, Users, Edit, Trash2, Check, X as XIcon, UserPlus, UserMinus, Clock, MapPin, Shield, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,6 +45,8 @@ interface GroupModalProps {
 interface GroupFormData {
   name: string;
   description: string;
+  isPrivate: boolean;
+  maxMembers: number;
 }
 
 export const GroupModal = ({ 
@@ -58,9 +60,11 @@ export const GroupModal = ({
 }: GroupModalProps) => {
   const [formData, setFormData] = useState<GroupFormData>({
     name: '',
-    description: ''
+    description: '',
+    isPrivate: false,
+    maxMembers: 100
   });
-  const [editingGroup, setEditingGroup] = useState<{ id: string; name: string; description: string | null } | null>(null);
+  const [editingGroup, setEditingGroup] = useState<{ id: string; name: string; description: string | null; isPrivate: boolean; maxMembers: number | null } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -76,7 +80,7 @@ export const GroupModal = ({
   // Reset form when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
-      setFormData({ name: '', description: '' });
+      setFormData({ name: '', description: '', isPrivate: false, maxMembers: 100 });
       setEditingGroup(null);
       setIsCreating(false);
       setIsEditing(false);
@@ -108,7 +112,7 @@ export const GroupModal = ({
         .order('joined_at', { ascending: false });
 
       if (error) throw error;
-      setGroupMembers(data || []);
+      setGroupMembers((data as unknown as GroupMember[]) || []);
     } catch (error) {
       console.error('Error fetching group members:', error);
     } finally {
@@ -131,7 +135,7 @@ export const GroupModal = ({
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setJoinRequests(data || []);
+      setJoinRequests((data as unknown as JoinRequest[]) || []);
     } catch (error) {
       console.error('Error fetching join requests:', error);
     } finally {
@@ -148,7 +152,9 @@ export const GroupModal = ({
       const groupData = {
         name: formData.name.trim(),
         description: formData.description.trim() || null,
-        admin_id: user.id
+        admin_id: user.id,
+        is_private: formData.isPrivate,
+        max_members: formData.maxMembers
       };
 
       const { data: insertedGroup, error } = await supabase
@@ -162,9 +168,21 @@ export const GroupModal = ({
         throw error;
       }
 
+      // Add admin as first member
+      await supabase
+        .from('group_members')
+        .insert({
+          group_id: insertedGroup.id,
+          user_id: user.id,
+          status: 'approved',
+          role: 'admin',
+          approved_at: new Date().toISOString(),
+          approved_by: user.id
+        });
+
       console.log('Group created successfully:', insertedGroup);
       onGroupCreated();
-      setFormData({ name: '', description: '' });
+      setFormData({ name: '', description: '', isPrivate: false, maxMembers: 100 });
       setIsCreating(false);
     } catch (error: any) {
       console.error('Error creating group:', error);
@@ -182,7 +200,9 @@ export const GroupModal = ({
     try {
       const groupData = {
         name: formData.name.trim(),
-        description: formData.description.trim() || null
+        description: formData.description.trim() || null,
+        is_private: formData.isPrivate,
+        max_members: formData.maxMembers
       };
 
       const { error } = await supabase
@@ -197,7 +217,7 @@ export const GroupModal = ({
 
       console.log('Group updated successfully');
       onGroupUpdated();
-      setFormData({ name: '', description: '' });
+      setFormData({ name: '', description: '', isPrivate: false, maxMembers: 100 });
       setEditingGroup(null);
       setIsEditing(false);
     } catch (error: any) {
@@ -248,13 +268,13 @@ export const GroupModal = ({
 
       if (error) throw error;
 
-      // Refresh members list
+      // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
       }
     } catch (error) {
       console.error('Error approving member:', error);
-      alert('Failed to approve member');
+      alert('Failed to approve member. Please try again.');
     }
   };
 
@@ -271,79 +291,77 @@ export const GroupModal = ({
 
       if (error) throw error;
 
-      // Refresh members list
+      // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
       }
     } catch (error) {
       console.error('Error rejecting member:', error);
-      alert('Failed to reject member');
+      alert('Failed to reject member. Please try again.');
     }
   };
 
   const handleApproveJoinRequest = async (requestId: string) => {
     try {
-      const { data: request, error: fetchError } = await supabase
-        .from('group_join_requests')
-        .select('*')
-        .eq('id', requestId)
-        .single();
+      const request = joinRequests.find(r => r.id === requestId);
+      if (!request) return;
 
-      if (fetchError) throw fetchError;
-
-      // Update join request status
-      const { error: updateError } = await supabase
-        .from('group_join_requests')
-        .update({ status: 'approved' })
-        .eq('id', requestId);
-
-      if (updateError) throw updateError;
-
-      // Add user to group members
-      const { error: memberError } = await supabase
-        .from('group_members')
-        .insert({
-          group_id: request.group_id,
-          user_id: request.user_id,
-          status: 'approved',
-          approved_at: new Date().toISOString(),
-          approved_by: user.id
+      // Use the database function to approve the member
+      const { data, error } = await supabase
+        .rpc('approve_group_member', {
+          group_uuid: request.group_id,
+          user_uuid: request.user_id,
+          admin_uuid: user.id
         });
 
-      if (memberError) throw memberError;
+      if (error) throw error;
 
-      // Refresh data
-      if (selectedGroup) {
-        fetchGroupMembers(selectedGroup.id);
-        fetchJoinRequests(selectedGroup.id);
+      if (data) {
+        // Refresh the requests and members lists
+        if (selectedGroup) {
+          fetchJoinRequests(selectedGroup.id);
+          fetchGroupMembers(selectedGroup.id);
+        }
+      } else {
+        alert('Failed to approve request. You may not have permission.');
       }
     } catch (error) {
       console.error('Error approving join request:', error);
-      alert('Failed to approve join request');
+      alert('Failed to approve join request. Please try again.');
     }
   };
 
   const handleRejectJoinRequest = async (requestId: string) => {
     try {
-      const { error } = await supabase
-        .from('group_join_requests')
-        .update({ status: 'rejected' })
-        .eq('id', requestId);
+      const request = joinRequests.find(r => r.id === requestId);
+      if (!request) return;
+
+      // Use the database function to reject the member
+      const { data, error } = await supabase
+        .rpc('reject_group_member', {
+          group_uuid: request.group_id,
+          user_uuid: request.user_id,
+          admin_uuid: user.id
+        });
 
       if (error) throw error;
 
-      // Refresh requests list
-      if (selectedGroup) {
-        fetchJoinRequests(selectedGroup.id);
+      if (data) {
+        // Refresh the requests list
+        if (selectedGroup) {
+          fetchJoinRequests(selectedGroup.id);
+        }
+      } else {
+        alert('Failed to reject request. You may not have permission.');
       }
     } catch (error) {
       console.error('Error rejecting join request:', error);
-      alert('Failed to reject join request');
+      alert('Failed to reject join request. Please try again.');
     }
   };
 
   const handleRemoveMember = async (memberId: string) => {
-    if (!confirm('Are you sure you want to remove this member?')) {
+    if (!confirm('Are you sure you want to remove this member from the group?')) {
       return;
     }
 
@@ -355,29 +373,37 @@ export const GroupModal = ({
 
       if (error) throw error;
 
-      // Refresh members list
+      // Refresh the members list
       if (selectedGroup) {
         fetchGroupMembers(selectedGroup.id);
       }
     } catch (error) {
       console.error('Error removing member:', error);
-      alert('Failed to remove member');
+      alert('Failed to remove member. Please try again.');
     }
   };
 
-  const startEditing = (group: { id: string; name: string; description: string | null }) => {
-    setEditingGroup(group);
+  const startEditing = (group: Group) => {
+    setEditingGroup({
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      isPrivate: group.is_private,
+      maxMembers: group.max_members
+    });
     setFormData({
       name: group.name,
-      description: group.description || ''
+      description: group.description || '',
+      isPrivate: group.is_private,
+      maxMembers: group.max_members || 100
     });
-    setIsEditing(true);
+    setActiveTab('edit');
   };
 
   const cancelEditing = () => {
     setEditingGroup(null);
-    setFormData({ name: '', description: '' });
-    setIsEditing(false);
+    setFormData({ name: '', description: '', isPrivate: false, maxMembers: 100 });
+    setActiveTab('create');
   };
 
   const getStatusBadge = (status: string) => {
@@ -393,16 +419,33 @@ export const GroupModal = ({
     }
   };
 
+  const getRoleBadge = (role: string) => {
+    switch (role) {
+      case 'admin':
+        return <Badge variant="default" className="bg-purple-500 flex items-center gap-1"><Crown className="w-3 h-3" />Admin</Badge>;
+      case 'moderator':
+        return <Badge variant="default" className="bg-blue-500 flex items-center gap-1"><Shield className="w-3 h-3" />Moderator</Badge>;
+      case 'member':
+        return <Badge variant="outline">Member</Badge>;
+      default:
+        return <Badge variant="outline">{role}</Badge>;
+    }
+  };
+
+  const isGroupAdmin = (group: Group) => {
+    return group.admin_id === user?.id;
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm">
-      <div className="fixed inset-x-4 top-20 bottom-20 max-w-md mx-auto">
+      <div className="fixed inset-x-4 top-4 bottom-4 max-w-4xl mx-auto">
         <Card className="card-apple h-full flex flex-col p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold flex items-center">
               <Users className="w-5 h-5 mr-2" />
-              {isEditing ? 'Edit Group' : 'Manage Groups'}
+              {editingGroup ? 'Edit Group' : 'Manage Groups'}
             </h2>
             <Button variant="ghost" size="sm" onClick={onClose} className="p-2">
               <X className="w-5 h-5" />
@@ -410,268 +453,364 @@ export const GroupModal = ({
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-            <TabsList className="grid w-full grid-cols-3 mb-4">
-              <TabsTrigger value="create">Create</TabsTrigger>
-              <TabsTrigger value="manage">Manage</TabsTrigger>
-              <TabsTrigger value="requests">Requests</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="create">Create Group</TabsTrigger>
+              <TabsTrigger value="edit" disabled={!editingGroup}>Edit Group</TabsTrigger>
+              <TabsTrigger value="manage">Manage Groups</TabsTrigger>
+              <TabsTrigger value="members" disabled={!selectedGroup}>Members</TabsTrigger>
             </TabsList>
 
             <TabsContent value="create" className="flex-1 flex flex-col">
-              {/* Create/Edit Form */}
-              {(!isEditing || editingGroup) && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-medium mb-4">
-                    {isEditing ? 'Edit Group' : 'Create New Group'}
-                  </h3>
-                  <form onSubmit={isEditing ? handleEditGroup : handleCreateGroup} className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-2 block">
-                        Group Name
-                      </label>
-                      <Input
-                        placeholder="Enter group name"
-                        value={formData.name}
-                        onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-2 block">
-                        Description (Optional)
-                      </label>
-                      <Textarea
-                        placeholder="Describe the group's purpose..."
-                        value={formData.description}
-                        onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                        className="w-full"
-                        rows={3}
-                      />
-                    </div>
-
-                    <div className="flex space-x-3">
-                      {isEditing && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={cancelEditing}
-                          className="flex-1"
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                      <Button
-                        type="submit"
-                        className="flex-1 btn-apple btn-primary"
-                        disabled={!formData.name.trim() || isCreating || isEditing}
-                      >
-                        {isCreating ? 'Creating...' : isEditing ? 'Update Group' : 'Create Group'}
-                      </Button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {/* Groups List */}
-              <div className="flex-1 overflow-y-auto">
-                <h3 className="text-lg font-medium mb-4">Your Groups</h3>
-                {groups.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p>No groups yet. Create your first group!</p>
+              <form onSubmit={handleCreateGroup} className="flex-1 flex flex-col">
+                <div className="space-y-4 flex-1">
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Group Name *
+                    </label>
+                    <Input
+                      placeholder="Enter group name"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      required
+                    />
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    {groups.map((group) => (
-                      <div key={group.id} className="bg-muted p-4 rounded-lg">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h4 className="font-medium">{group.name}</h4>
-                            {group.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{group.description}</p>
-                            )}
-                            <p className="text-xs text-muted-foreground mt-2">
-                              Admin: {group.profiles?.full_name || 'Unknown'}
-                            </p>
+
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Description
+                    </label>
+                    <Textarea
+                      placeholder="Describe your group..."
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="isPrivate"
+                        checked={formData.isPrivate}
+                        onChange={(e) => setFormData({ ...formData, isPrivate: e.target.checked })}
+                        className="rounded"
+                      />
+                      <label htmlFor="isPrivate" className="text-sm font-medium">
+                        Private Group
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Max Members
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={formData.maxMembers}
+                      onChange={(e) => setFormData({ ...formData, maxMembers: parseInt(e.target.value) || 100 })}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex space-x-3 mt-6">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={onClose}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="flex-1 btn-apple btn-primary"
+                    disabled={isCreating}
+                  >
+                    {isCreating ? 'Creating...' : 'Create Group'}
+                  </Button>
+                </div>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="edit" className="flex-1 flex flex-col">
+              <form onSubmit={handleEditGroup} className="flex-1 flex flex-col">
+                <div className="space-y-4 flex-1">
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Group Name *
+                    </label>
+                    <Input
+                      placeholder="Enter group name"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Description
+                    </label>
+                    <Textarea
+                      placeholder="Describe your group..."
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="editIsPrivate"
+                        checked={formData.isPrivate}
+                        onChange={(e) => setFormData({ ...formData, isPrivate: e.target.checked })}
+                        className="rounded"
+                      />
+                      <label htmlFor="editIsPrivate" className="text-sm font-medium">
+                        Private Group
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-foreground mb-2 block">
+                      Max Members
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={formData.maxMembers}
+                      onChange={(e) => setFormData({ ...formData, maxMembers: parseInt(e.target.value) || 100 })}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex space-x-3 mt-6">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={cancelEditing}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="flex-1 btn-apple btn-primary"
+                    disabled={isEditing}
+                  >
+                    {isEditing ? 'Updating...' : 'Update Group'}
+                  </Button>
+                </div>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="manage" className="flex-1 flex flex-col">
+              <div className="space-y-4 flex-1">
+                <div className="grid gap-4">
+                  {groups.map((group) => (
+                    <Card key={group.id} className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <h3 className="font-semibold">{group.name}</h3>
+                            {group.is_private && <Badge variant="outline">Private</Badge>}
+                            {isGroupAdmin(group) && <Badge variant="default" className="bg-purple-500">Admin</Badge>}
                           </div>
-                          
-                          {group.admin_id === user?.id && (
-                            <div className="flex space-x-2 ml-4">
+                          {group.description && (
+                            <p className="text-sm text-muted-foreground mb-2">{group.description}</p>
+                          )}
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            <span>Admin: {group.profiles?.full_name || 'Unknown'}</span>
+                            <span>Members: {group.member_count || 0}</span>
+                            {group.pending_requests && group.pending_requests > 0 && (
+                              <span className="text-orange-500">Pending: {group.pending_requests}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isGroupAdmin(group) && (
+                            <>
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
                                 onClick={() => startEditing(group)}
-                                className="p-2"
-                                disabled={isEditing}
                               >
                                 <Edit className="w-4 h-4" />
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setSelectedGroup(group)}
+                              >
+                                <Users className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="destructive"
                                 size="sm"
                                 onClick={() => handleDeleteGroup(group.id)}
-                                className="p-2 text-destructive hover:text-destructive"
                                 disabled={isDeleting}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
-                            </div>
+                            </>
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-
-            <TabsContent value="manage" className="flex-1 flex flex-col">
-              <div className="mb-4">
-                <h3 className="text-lg font-medium mb-2">Select Group to Manage</h3>
-                <select
-                  className="w-full p-2 border rounded"
-                  value={selectedGroup?.id || ''}
-                  onChange={(e) => {
-                    const group = groups.find(g => g.id === e.target.value);
-                    setSelectedGroup(group || null);
-                  }}
-                >
-                  <option value="">Select a group...</option>
-                  {groups.filter(g => g.admin_id === user?.id).map(group => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
+                    </Card>
                   ))}
-                </select>
-              </div>
-
-              {selectedGroup && (
-                <div className="flex-1 overflow-y-auto">
-                  <h4 className="font-medium mb-3">Members of {selectedGroup.name}</h4>
-                  {loadingMembers ? (
-                    <div className="text-center py-4">Loading members...</div>
-                  ) : groupMembers.length === 0 ? (
-                    <div className="text-center py-4 text-muted-foreground">No members yet</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {groupMembers.map((member) => (
-                        <div key={member.id} className="bg-background p-3 rounded border">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <p className="font-medium">{member.profiles?.full_name || 'Unknown'}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                {getStatusBadge(member.status)}
-                                <span className="text-xs text-muted-foreground">
-                                  Joined {new Date(member.joined_at).toLocaleDateString()}
-                                </span>
-                              </div>
-                            </div>
-                            
-                            {member.status === 'pending' && (
-                              <div className="flex space-x-1">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleApproveMember(member.id)}
-                                  className="p-1 bg-green-500 hover:bg-green-600"
-                                >
-                                  <Check className="w-3 h-3" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleRejectMember(member.id)}
-                                  className="p-1 bg-red-500 hover:bg-red-600"
-                                >
-                                  <XIcon className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            )}
-                            
-                            {member.status === 'approved' && member.user_id !== user?.id && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleRemoveMember(member.id)}
-                                className="p-1"
-                              >
-                                <UserMinus className="w-3 h-3" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
-              )}
+              </div>
             </TabsContent>
 
-            <TabsContent value="requests" className="flex-1 flex flex-col">
-              <div className="mb-4">
-                <h3 className="text-lg font-medium mb-2">Join Requests</h3>
-                <select
-                  className="w-full p-2 border rounded"
-                  value={selectedGroup?.id || ''}
-                  onChange={(e) => {
-                    const group = groups.find(g => g.id === e.target.value);
-                    setSelectedGroup(group || null);
-                  }}
-                >
-                  <option value="">Select a group...</option>
-                  {groups.filter(g => g.admin_id === user?.id).map(group => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
+            <TabsContent value="members" className="flex-1 flex flex-col">
               {selectedGroup && (
-                <div className="flex-1 overflow-y-auto">
-                  <h4 className="font-medium mb-3">Pending Requests for {selectedGroup.name}</h4>
-                  {loadingRequests ? (
-                    <div className="text-center py-4">Loading requests...</div>
-                  ) : joinRequests.length === 0 ? (
-                    <div className="text-center py-4 text-muted-foreground">No pending requests</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {joinRequests.map((request) => (
-                        <div key={request.id} className="bg-background p-3 rounded border">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <p className="font-medium">{request.profiles?.full_name || 'Unknown'}</p>
-                              {request.message && (
-                                <p className="text-sm text-muted-foreground mt-1">{request.message}</p>
-                              )}
-                              <div className="flex items-center gap-2 mt-1">
-                                <Clock className="w-3 h-3" />
-                                <span className="text-xs text-muted-foreground">
-                                  {new Date(request.created_at).toLocaleDateString()}
-                                </span>
-                              </div>
-                            </div>
-                            
-                            <div className="flex space-x-1 ml-2">
-                              <Button
-                                size="sm"
-                                onClick={() => handleApproveJoinRequest(request.id)}
-                                className="p-1 bg-green-500 hover:bg-green-600"
-                              >
-                                <Check className="w-3 h-3" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                onClick={() => handleRejectJoinRequest(request.id)}
-                                className="p-1 bg-red-500 hover:bg-red-600"
-                              >
-                                <XIcon className="w-3 h-3" />
-                              </Button>
-                            </div>
-                          </div>
+                <div className="space-y-6 flex-1">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">
+                      {selectedGroup.name} - Members
+                    </h3>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedGroup(null)}
+                    >
+                      Back to Groups
+                    </Button>
+                  </div>
+
+                  <Tabs defaultValue="members" className="flex-1 flex flex-col">
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="members">Members ({groupMembers.filter(m => m.status === 'approved').length})</TabsTrigger>
+                      <TabsTrigger value="requests">Join Requests ({joinRequests.length})</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="members" className="flex-1">
+                      {loadingMembers ? (
+                        <div className="flex items-center justify-center h-32">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      ) : (
+                        <div className="space-y-3">
+                          {groupMembers.map((member) => (
+                            <Card key={member.id} className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+                                    <Users className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{member.profiles?.full_name || 'Unknown User'}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      {getRoleBadge(member.role)}
+                                      {getStatusBadge(member.status)}
+                                    </div>
+                                  </div>
+                                </div>
+                                {isGroupAdmin(selectedGroup) && member.user_id !== user?.id && (
+                                  <div className="flex items-center gap-2">
+                                    {member.status === 'pending' && (
+                                      <>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleApproveMember(member.id)}
+                                        >
+                                          <Check className="w-4 h-4" />
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleRejectMember(member.id)}
+                                        >
+                                          <XIcon className="w-4 h-4" />
+                                        </Button>
+                                      </>
+                                    )}
+                                    {member.status === 'approved' && (
+                                      <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => handleRemoveMember(member.id)}
+                                      >
+                                        <UserMinus className="w-4 h-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </Card>
+                          ))}
+                          {groupMembers.length === 0 && (
+                            <div className="text-center text-muted-foreground py-8">
+                              No members found.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </TabsContent>
+
+                    <TabsContent value="requests" className="flex-1">
+                      {loadingRequests ? (
+                        <div className="flex items-center justify-center h-32">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {joinRequests.map((request) => (
+                            <Card key={request.id} className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
+                                    <Clock className="w-4 h-4 text-orange-600" />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{request.profiles?.full_name || 'Unknown User'}</p>
+                                    {request.message && (
+                                      <p className="text-sm text-muted-foreground mt-1">{request.message}</p>
+                                    )}
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Requested {new Date(request.created_at).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                </div>
+                                {isGroupAdmin(selectedGroup) && (
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleApproveJoinRequest(request.id)}
+                                    >
+                                      <Check className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleRejectJoinRequest(request.id)}
+                                    >
+                                      <XIcon className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </Card>
+                          ))}
+                          {joinRequests.length === 0 && (
+                            <div className="text-center text-muted-foreground py-8">
+                              No pending join requests.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
                 </div>
               )}
             </TabsContent>

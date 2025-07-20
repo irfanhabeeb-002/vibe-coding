@@ -6,6 +6,7 @@ import { FilterTabs } from "@/components/FilterTabs";
 import { NewPostModal } from "@/components/NewPostModal";
 import { GroupModal } from "@/components/GroupModal";
 import { JoinGroupModal } from "@/components/JoinGroupModal";
+import { NearbySection } from "@/components/NearbySection";
 import { DatabaseSetupBanner } from "@/components/DatabaseSetupBanner";
 import { AuthModal } from "@/components/AuthModal";
 import { useToast } from "@/hooks/use-toast";
@@ -37,6 +38,7 @@ interface PostData {
   latitude?: number;
   longitude?: number;
   groupId?: string;
+  isGroupOnly?: boolean;
 }
 
 // Kerala districts for location selection
@@ -234,7 +236,24 @@ const Index = () => {
     try {
       console.log('Fetching food posts...');
       
-      // Get all active food posts that haven't expired
+      // First, let's get ALL posts without filters to debug
+      const { data: allPostsData, error: allPostsError } = await supabase
+        .from('food_posts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (allPostsError) {
+        console.error('Error fetching all food posts:', allPostsError);
+        setFoodPosts([]);
+        return;
+      }
+
+      console.log('All posts in database:', allPostsData?.length || 0);
+      if (allPostsData && allPostsData.length > 0) {
+        console.log('Sample post:', allPostsData[0]);
+      }
+      
+      // Now get filtered posts
       const { data: postsData, error: postsError } = await supabase
         .from('food_posts')
         .select('*')
@@ -722,6 +741,7 @@ const Index = () => {
         current_count: parseInt(data.count.toString()),
         posted_by: user.id,
         group_id: data.groupId || null,
+        is_group_only: data.isGroupOnly || false,
         is_active: true
       };
 
@@ -863,7 +883,8 @@ const Index = () => {
             return {
               ...post,
               profiles: profileData,
-              distance: `${post.distance_km.toFixed(1)} km`
+              distance: `${post.distance_km.toFixed(1)} km`,
+              is_group_only: (post as any).is_group_only || false
             } as FoodPost;
           })
         );
@@ -1105,55 +1126,12 @@ const Index = () => {
       case 'nearby':
         return (
           <div className="pb-20">
-            <div className="px-4 py-3 bg-background">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold">📍 Nearby Food</h3>
-                <button
-                  className="btn-apple btn-primary px-3 py-1 rounded text-sm"
-                  onClick={fetchNearbyPosts}
-                  disabled={nearbyLoading}
-                >
-                  {nearbyLoading ? 'Loading...' : 'Refresh'}
-                </button>
-              </div>
-              {nearbyError && <div className="text-red-500 text-sm mt-2">{nearbyError}</div>}
-            </div>
             <div className="px-4 space-y-4">
-              {nearbyLoading ? (
-                <div className="text-center py-12">
-                  <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                  <p className="text-muted-foreground">Finding nearby food...</p>
-                </div>
-              ) : nearbyPosts.length === 0 ? (
-                <div className="text-center py-12 fade-in">
-                  <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-2xl">📍</span>
-                  </div>
-                  <h3 className="font-semibold text-lg mb-2">No nearby food found</h3>
-                  <p className="text-muted-foreground text-sm mb-4">
-                    {nearbyError ? 'Location access denied. Please enable location services.' : 'No food available within 10km. Try again later!'}
-                  </p>
-                </div>
-              ) : (
-                nearbyPosts.map((post, index) => (
-                  <div key={post.id} className="slide-up" style={{ animationDelay: `${index * 0.1}s` }}>
-                    <FoodCard 
-                      id={post.id}
-                      title={post.title}
-                      location={post.location}
-                      time={`Available until ${new Date(post.available_until).toLocaleString()}`}
-                      count={post.current_count}
-                      totalCount={post.total_count}
-                      postedBy={post.profiles?.full_name || 'Anonymous'}
-                      distance={post.distance}
-                      description={post.description || 'No description'}
-                      availableUntil={post.available_until}
-                      onAvail={handleAvail}
-                      onReport={() => openReportModal(post)}
-                    />
-                  </div>
-                ))
-              )}
+              <NearbySection
+                user={user}
+                onClaim={handleAvail}
+                onReport={openReportModal}
+              />
             </div>
           </div>
         );

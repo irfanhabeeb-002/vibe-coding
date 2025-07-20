@@ -15,6 +15,9 @@ export type Database = {
           user_id: string
           full_name: string | null
           avatar_url: string | null
+          location: string | null
+          latitude: number | null
+          longitude: number | null
           created_at: string
           updated_at: string
         }
@@ -23,6 +26,9 @@ export type Database = {
           user_id: string
           full_name?: string | null
           avatar_url?: string | null
+          location?: string | null
+          latitude?: number | null
+          longitude?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -31,6 +37,9 @@ export type Database = {
           user_id?: string
           full_name?: string | null
           avatar_url?: string | null
+          location?: string | null
+          latitude?: number | null
+          longitude?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -50,6 +59,8 @@ export type Database = {
           name: string
           description: string | null
           admin_id: string
+          is_private: boolean
+          max_members: number | null
           created_at: string
           updated_at: string
         }
@@ -58,6 +69,8 @@ export type Database = {
           name: string
           description?: string | null
           admin_id: string
+          is_private?: boolean
+          max_members?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -66,6 +79,8 @@ export type Database = {
           name?: string
           description?: string | null
           admin_id?: string
+          is_private?: boolean
+          max_members?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -85,6 +100,7 @@ export type Database = {
           group_id: string
           user_id: string
           status: 'pending' | 'approved' | 'rejected'
+          role: 'admin' | 'moderator' | 'member'
           joined_at: string
           approved_at: string | null
           approved_by: string | null
@@ -94,6 +110,7 @@ export type Database = {
           group_id: string
           user_id: string
           status?: 'pending' | 'approved' | 'rejected'
+          role?: 'admin' | 'moderator' | 'member'
           joined_at?: string
           approved_at?: string | null
           approved_by?: string | null
@@ -103,6 +120,7 @@ export type Database = {
           group_id?: string
           user_id?: string
           status?: 'pending' | 'approved' | 'rejected'
+          role?: 'admin' | 'moderator' | 'member'
           joined_at?: string
           approved_at?: string | null
           approved_by?: string | null
@@ -190,6 +208,7 @@ export type Database = {
           posted_by: string
           group_id: string | null
           is_active: boolean
+          is_group_only: boolean
           created_at: string
           updated_at: string
         }
@@ -206,6 +225,7 @@ export type Database = {
           posted_by: string
           group_id?: string | null
           is_active?: boolean
+          is_group_only?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -222,6 +242,7 @@ export type Database = {
           posted_by?: string
           group_id?: string | null
           is_active?: boolean
+          is_group_only?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -284,7 +305,7 @@ export type Database = {
           user_id: string
           title: string
           message: string
-          type: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected'
+          type: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected' | 'member_removed' | 'group_post'
           related_id: string | null
           is_read: boolean
           created_at: string
@@ -294,7 +315,7 @@ export type Database = {
           user_id: string
           title: string
           message: string
-          type: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected'
+          type: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected' | 'member_removed' | 'group_post'
           related_id?: string | null
           is_read?: boolean
           created_at?: string
@@ -304,7 +325,7 @@ export type Database = {
           user_id?: string
           title?: string
           message?: string
-          type?: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected'
+          type?: 'new_post' | 'group_invite' | 'post_update' | 'report_status' | 'join_request' | 'join_approved' | 'join_rejected' | 'member_removed' | 'group_post'
           related_id?: string | null
           is_read?: boolean
           created_at?: string
@@ -325,6 +346,7 @@ export type Database = {
           reported_by: string
           food_post_id: string | null
           user_id: string | null
+          group_id: string | null
           reason: string
           description: string | null
           status: 'pending' | 'reviewed' | 'resolved' | 'dismissed'
@@ -336,6 +358,7 @@ export type Database = {
           reported_by: string
           food_post_id?: string | null
           user_id?: string | null
+          group_id?: string | null
           reason: string
           description?: string | null
           status?: 'pending' | 'reviewed' | 'resolved' | 'dismissed'
@@ -347,6 +370,7 @@ export type Database = {
           reported_by?: string
           food_post_id?: string | null
           user_id?: string | null
+          group_id?: string | null
           reason?: string
           description?: string | null
           status?: 'pending' | 'reviewed' | 'resolved' | 'dismissed'
@@ -373,6 +397,13 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reports_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
             referencedColumns: ["id"]
           }
         ]
@@ -405,6 +436,37 @@ export type Database = {
           updated_at: string
           distance_km: number
         }[]
+      }
+      get_user_groups: {
+        Args: {
+          user_uuid: string
+        }
+        Returns: {
+          group_id: string
+          group_name: string
+          group_description: string | null
+          admin_id: string
+          admin_name: string | null
+          member_count: number
+          user_role: string | null
+          user_status: string | null
+        }[]
+      }
+      approve_group_member: {
+        Args: {
+          group_uuid: string
+          user_uuid: string
+          admin_uuid: string
+        }
+        Returns: boolean
+      }
+      reject_group_member: {
+        Args: {
+          group_uuid: string
+          user_uuid: string
+          admin_uuid: string
+        }
+        Returns: boolean
       }
     }
     Enums: {

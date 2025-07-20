@@ -26,6 +26,7 @@ interface PostData {
   latitude?: number;
   longitude?: number;
   groupId?: string;
+  isGroupOnly?: boolean;
 }
 
 export const NewPostModal = ({ isOpen, onClose, onSubmit, districts, groups, user, onAuthClick }: NewPostModalProps) => {
@@ -38,7 +39,8 @@ export const NewPostModal = ({ isOpen, onClose, onSubmit, districts, groups, use
     district: '',
     latitude: undefined,
     longitude: undefined,
-    groupId: undefined
+    groupId: undefined,
+    isGroupOnly: false
   });
 
   const [locationLoading, setLocationLoading] = useState(false);
@@ -115,7 +117,8 @@ export const NewPostModal = ({ isOpen, onClose, onSubmit, districts, groups, use
       district: '',
       latitude: undefined,
       longitude: undefined,
-      groupId: undefined
+      groupId: undefined,
+      isGroupOnly: false
     });
     onClose();
   };
@@ -289,6 +292,20 @@ export const NewPostModal = ({ isOpen, onClose, onSubmit, districts, groups, use
                     ))}
                   </SelectContent>
                 </Select>
+                {formData.groupId && (
+                  <div className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="checkbox"
+                      id="isGroupOnly"
+                      checked={formData.isGroupOnly}
+                      onChange={(e) => setFormData(prev => ({ ...prev, isGroupOnly: e.target.checked }))}
+                      className="rounded"
+                    />
+                    <label htmlFor="isGroupOnly" className="text-sm text-muted-foreground">
+                      Group members only (not visible to public)
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div>
